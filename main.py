@@ -12,7 +12,7 @@ USE_LOCAL_DATA = True # whether to load data from S3 (false) or locally (true)
 LOCAL_DATA_REPOSITORY = "s3data/usdot-its-cvpilot-public-data" # path to local directory containing s3 data
 
 ### Query to run
-METADATA_QUERY = MetadataQueries.query1_totalRecordCount
+METADATA_QUERY = MetadataQueries.query3_goodOtherRecordCount
 
 ### Data source configuration settings
 PREFIX_STRINGS = ["wydot/BSM/2018/12", "wydot/BSM/2019/01", "wydot/BSM/2019/02", "wydot/BSM/2019/03", "wydot/BSM/2019/04"]
@@ -48,6 +48,7 @@ def perform_query(s3_client, s3_file_list, query_function):
         file_process_start_time = time.time()
         print("============================================================================")
         print("Analyzing file (%d/%d) '%s'" % (file_num, len(s3_file_list), filename))
+        print("Query being performed: %s" % str(METADATA_QUERY))
         file_num += 1
         record_list = extract_records_from_file(s3_client, filename)
         records_in_timeframe = 0
@@ -58,10 +59,10 @@ def perform_query(s3_client, s3_file_list, query_function):
                 records_in_timeframe += 1
             else:
                 records_not_in_timeframe += 1
-        print("Records satisfying query restraints found in this file: \t%d" % records_in_timeframe)
-        print("Total records found in timeframe so far: \t\t%d" % total_records_in_timeframe)
-        print("Records NOT in timeframe: \t\t\t\t%d" % records_not_in_timeframe)
-        print("Total records NOT in timeframe so far: \t\t\t%d" % total_records_not_in_timeframe)
+        print("Records satisfying query constraints found in this file: \t%d" % records_in_timeframe)
+        print("Total records found satisfying query constraints so far: \t\t%d" % total_records_in_timeframe)
+        print("Records NOT found satisfying query constraints: \t\t\t\t%d" % records_not_in_timeframe)
+        print("Total records NOT found satisfying query constraints so far: \t\t\t%d" % total_records_not_in_timeframe)
         time_now = time.time()
         print("Time taken to process this file: \t\t\t%.3f" % (time_now - file_process_start_time))
         time_elapsed = (time_now - query_start_time)
@@ -74,7 +75,7 @@ def perform_query(s3_client, s3_file_list, query_function):
         print("Estimated time remaining: \t\t\t\t%.3f" % est_time_remaining)
         total_records_in_timeframe += records_in_timeframe
         total_records_not_in_timeframe += records_not_in_timeframe
-    print("Total records in timeframe: %d (Number of records not in timeframe: %d" % (total_records_in_timeframe, total_records_not_in_timeframe))
+    print("Total number of records found satisfying query constraints: %d (Total number of records not found satisfying query constraints: %d" % (total_records_in_timeframe, total_records_not_in_timeframe))
 
 ### Returns a list of records from a given file
 def extract_records_from_file(s3_client, filename):
