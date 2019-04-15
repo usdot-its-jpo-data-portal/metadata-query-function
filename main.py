@@ -1,10 +1,18 @@
 import boto3
 import dateutil
+import glob
 import json
+import logging
+import os
 import queue
 import time
-import logging
-import ciso8601
+from queries import MetadataQueries
+
+USE_LOCAL_DATA = True # whether to load data from S3 (false) or locally (true)
+LOCAL_DATA_REPOSITORY = "s3data/usdot-its-cvpilot-public-data" # path to local directory containing s3 data
+
+### Query to run
+METADATA_QUERY = MetadataQueries.query1_totalRecordCount
 
 ### Data source configuration settings
 PREFIX_STRINGS = ["wydot/BSM/2018/12", "wydot/BSM/2019/01", "wydot/BSM/2019/02", "wydot/BSM/2019/03", "wydot/BSM/2019/04"]
@@ -14,28 +22,28 @@ MESSAGE_TYPES = ["BSM"]
 
 def lambda_handler(event, context):
 
+    if USE_LOCAL_DATA:
+        print("NOTE: Using local data in directory '%s'" % LOCAL_DATA_REPOSITORY)
+
     # Create a list of analyzable S3 files
     s3_client = boto3.client('s3')
     s3_file_list = []
     for prefix in PREFIX_STRINGS:
         matched_file_list = list_s3_files_matching_prefix(s3_client, prefix)
         print("Queried for S3 files matching prefix string '%s'. Found %d matching files." % (prefix, len(matched_file_list)))
-        # print("Matching files: [%s]" % ", ".join(matched_file_list))
+        print("Matching files: [%s]" % ", ".join(matched_file_list))
         s3_file_list.extend(matched_file_list)
 
-    perform_query_1(s3_client, s3_file_list)
+    perform_query(s3_client, s3_file_list, METADATA_QUERY)
     return
 
-def perform_query_1(s3_client, s3_file_list):
-    #####
-    # Pseudoquery:
-    # totalRecordCount = SELECT COUNT(*) WHERE metadata.odeReceivedAt >= 12/3/2018 AND metadata.odeReceivedAt < dateOfBugFix
+def perform_query(s3_client, s3_file_list, query_function):
     total_records = 0
     total_records_in_timeframe = 0
     total_records_not_in_timeframe = 0
     file_num = 1
     query_start_time = time.time()
-    start_time = ciso8601.parse_datetime_as_naive('2018-12-03T00:00:00.000Z')
+
     for filename in s3_file_list:
         file_process_start_time = time.time()
         print("============================================================================")
@@ -46,16 +54,11 @@ def perform_query_1(s3_client, s3_file_list):
         records_not_in_timeframe = 0
         for record in record_list:
             total_records += 1
-            try:
-                received_at_string = json.loads(record)['metadata']['odeReceivedAt']
-                received_at = ciso8601.parse_datetime_as_naive(received_at_string)
-                if received_at > start_time:
-                    records_in_timeframe += 1
-                else:
-                    records_not_in_timeframe += 1
-            except Exception as e:
-                print("Was unable to parse 'odeReceivedAt'. Error: %s, odeReceivedAt: %s" % (str(e), received_at_string))
-        print("Records found in timeframe in this file (after %s): \t%d" % (start_time, records_in_timeframe))
+            if query_function(record):
+                records_in_timeframe += 1
+            else:
+                records_not_in_timeframe += 1
+        print("Records satisfying query restraints found in this file: \t%d" % records_in_timeframe)
         print("Total records found in timeframe so far: \t\t%d" % total_records_in_timeframe)
         print("Records NOT in timeframe: \t\t\t\t%d" % records_not_in_timeframe)
         print("Total records NOT in timeframe so far: \t\t\t%d" % total_records_not_in_timeframe)
@@ -75,23 +78,38 @@ def perform_query_1(s3_client, s3_file_list):
 
 ### Returns a list of records from a given file
 def extract_records_from_file(s3_client, filename):
-    s3_file = s3_client.get_object(
-        Bucket=S3_BUCKET,
-        Key=filename,
-    )
-    return list(s3_file['Body'].iter_lines()) ### iter_lines() is significantly faster than read().splitlines()
+    if USE_LOCAL_DATA:
+        with open(filename, 'r') as f:
+            return f.readlines()
+    else:
+        s3_file = s3_client.get_object(
+            Bucket=S3_BUCKET,
+            Key=filename,
+        )
+        return list(s3_file['Body'].iter_lines()) ### iter_lines() is significantly faster than read().splitlines()
 
 ### Returns filenames from an S3 list files (list_objects) query
 def list_s3_files_matching_prefix(s3_client, prefix_string):
-    response = list_s3_objects(s3_client, prefix_string)
-    filenames = []
-    if response.get('Contents'):
-        [filenames.append(item['Key']) for item in response.get('Contents')]
-    while response.get('NextContinuationToken'):
-        response = list_s3_objects(s3_client, prefix_string, response.get('NextContinuationToken'))
+    if USE_LOCAL_DATA:
+        try:
+            files_and_directories = glob.glob(LOCAL_DATA_REPOSITORY+"/"+prefix_string+"/**/*", recursive=True)
+            files_only = []
+            for filepath in files_and_directories:
+                if os.path.isfile(filepath):
+                    files_only.append(filepath)
+            return files_only
+        except FileNotFoundError as e:
+            return []
+    else:
+        response = list_s3_objects(s3_client, prefix_string)
+        filenames = []
         if response.get('Contents'):
             [filenames.append(item['Key']) for item in response.get('Contents')]
-    return filenames
+        while response.get('NextContinuationToken'):
+            response = list_s3_objects(s3_client, prefix_string, response.get('NextContinuationToken'))
+            if response.get('Contents'):
+                [filenames.append(item['Key']) for item in response.get('Contents')]
+        return filenames
 
 def list_s3_objects(s3_client, prefix_string, continuation_token=None):
     if continuation_token:
