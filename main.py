@@ -12,7 +12,7 @@ USE_LOCAL_DATA = True # whether to load data from S3 (false) or locally (true)
 LOCAL_DATA_REPOSITORY = "s3data/usdot-its-cvpilot-public-data" # path to local directory containing s3 data
 
 ### Query to run
-METADATA_QUERY = MetadataQueries.query3_goodOtherRecordCount
+METADATA_QUERY = MetadataQueries.query4_badBsmRecordCount
 
 ### Data source configuration settings
 PREFIX_STRINGS = ["wydot/BSM/2018/12", "wydot/BSM/2019/01", "wydot/BSM/2019/02", "wydot/BSM/2019/03", "wydot/BSM/2019/04"]
