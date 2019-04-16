@@ -12,13 +12,11 @@ USE_LOCAL_DATA = True # whether to load data from S3 (false) or locally (true)
 LOCAL_DATA_REPOSITORY = "s3data/usdot-its-cvpilot-public-data" # path to local directory containing s3 data
 
 ### Query to run
-METADATA_QUERY = MetadataQueries.query4_badBsmRecordCount
+METADATA_QUERY = 'query13_listOfLogFilesBefore'
 
 ### Data source configuration settings
-PREFIX_STRINGS = ["wydot/BSM/2018/12", "wydot/BSM/2019/01", "wydot/BSM/2019/02", "wydot/BSM/2019/03", "wydot/BSM/2019/04"]
+PREFIX_STRINGS = ["wydot/BSM/2018/12", "wydot/BSM/2019/01", "wydot/BSM/2019/02", "wydot/BSM/2019/03", "wydot/BSM/2019/04", "wydot/TIM/2018/12", "wydot/TIM/2019/01", "wydot/TIM/2019/02", "wydot/TIM/2019/03", "wydot/TIM/2019/04"]
 S3_BUCKET = "usdot-its-cvpilot-public-data"
-DATA_PROVIDERS = ["wydot"]
-MESSAGE_TYPES = ["BSM"]
 
 def lambda_handler(event, context):
 
@@ -34,15 +32,19 @@ def lambda_handler(event, context):
         print("Matching files: [%s]" % ", ".join(matched_file_list))
         s3_file_list.extend(matched_file_list)
 
-    perform_query(s3_client, s3_file_list, METADATA_QUERY)
+    metadataQueries = MetadataQueries()
+
+    perform_query(s3_client, s3_file_list, metadataQueries, METADATA_QUERY)
     return
 
-def perform_query(s3_client, s3_file_list, query_function):
+def perform_query(s3_client, s3_file_list, query_object, query_function):
     total_records = 0
     total_records_in_timeframe = 0
     total_records_not_in_timeframe = 0
     file_num = 1
     query_start_time = time.time()
+
+    invalid_s3_files = []
 
     for filename in s3_file_list:
         file_process_start_time = time.time()
@@ -55,8 +57,10 @@ def perform_query(s3_client, s3_file_list, query_function):
         records_not_in_timeframe = 0
         for record in record_list:
             total_records += 1
-            if query_function(record):
+            if getattr(query_object, query_function)(record):
                 records_in_timeframe += 1
+                if METADATA_QUERY == 'query11_invalidS3FileCount' and filename not in invalid_s3_files:
+                    invalid_s3_files.append(filename)
             else:
                 records_not_in_timeframe += 1
         print("Records satisfying query constraints found in this file: \t%d" % records_in_timeframe)
@@ -75,6 +79,25 @@ def perform_query(s3_client, s3_file_list, query_function):
         print("Estimated time remaining: \t\t\t\t%.3f" % est_time_remaining)
         total_records_in_timeframe += records_in_timeframe
         total_records_not_in_timeframe += records_not_in_timeframe
+    print("============================================================================")
+    print("Querying complete.")
+
+    ### Query-specific output
+    if hasattr(query_object, 'earliest_generated_at'):
+        print("Earliest record_generated_at: %s" % query_object.earliest_generated_at)
+    if hasattr(query_object, 'latest_generated_at'):
+        print("Latest record_generated_at: %s" % query_object.latest_generated_at)
+    if METADATA_QUERY == 'query11_invalidS3FileCount':
+        print("Invalid s3 file count: %d" % len(invalid_s3_files))
+        invalid_s3_file_out = open('invalid_s3_file_list.txt', 'w')
+        invalid_s3_file_out.write("%s" % "\n".join(invalid_s3_files))
+        print("Invalid S3 files written to 'invalid_s3_file_list.txt'")
+    if METADATA_QUERY == 'query13_listOfLogFilesBefore':
+        print("Invalid log file count: %d" % len(query_object.log_file_list))
+        invalid_log_file_list_out = open('invalid_log_file_list.txt', 'w')
+        invalid_log_file_list_out.write("%s" % "\n".join(query_object.log_file_list.keys()))
+        print("Invalid S3 files written to 'invalid_log_file_list.txt'")
+
     print("Total number of records found satisfying query constraints: %d (Total number of records not found satisfying query constraints: %d" % (total_records_in_timeframe, total_records_not_in_timeframe))
 
 ### Returns a list of records from a given file
